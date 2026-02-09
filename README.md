@@ -8,6 +8,8 @@ This is the official demo for the paper **Breaking the Factorization Barrier in 
   
 </p>
 
+***Motivation and Intuition of CoDD.*** **Left:** Illustration of the misspecification gap. The plot reports the perplexity of [LLaDA](https://github.com/ML-GSAI/LLaDA) on the MathInstruct validation set across varying mask ratios. Curve **(a)** Sequential generation represents the ideal baseline (i.e., the true joint distribution learned by the model). When restricted to **(b)** One-step generation, the independence assumption causes significant performance degradation. The shaded region highlights this loss of perplexity, defined as the misspecification gap $\mathcal{L}_{\mathrm{gap}}$. **(c)** CoDD significantly bridges this gap while retaining the efficiency of one-step prediction. **Right:** Conceptual comparison on "He is from \<MASK\> \<MASK\>". **(a)** Sequential generation accurately resolves dependencies but sacrifices speed. **(b)** One-step generation predicts in parallel but assumes independence, leading to incoherent mixtures like "San York". **(c)** CoDD overcomes this by modulating predictions with a tractable probabilistic inference layer, recovering valid joint distributions (e.g., "San Diego") in a single parallel step.
+
 ## Quick Start
 
 ### 1. Install Dependencies
