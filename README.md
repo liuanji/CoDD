@@ -1,4 +1,4 @@
-# **Co**upula **D**iscrete **D**iffusion (CoDD)
+# **Co**upled **D**iscrete **D**iffusion (CoDD)
 
 This is the official demo for the paper **Breaking the Factorization Barrier in Diffusion Language Models**.
 
