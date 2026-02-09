@@ -42,6 +42,19 @@ This script compares on a simple example:
 - **Base LLaDA-8B-Instruct**: Standard block diffusion generation
 - **CoDD**: Copula-guided block diffusion generation
 
+## Pre-trained PC Models
+
+We provide domain-specific Probabilistic Circuit (PC) guidance models for both **LLaDA** and **Dream** architectures. Use these with the `--pc_ckpt` argument to enable Copula-guided generation.
+
+| Base Model | Domain / Task | Checkpoint ID |
+| :--- | :--- | :--- |
+| **LLaDA-8B** | Mathematical Reasoning | [`il18/llada-math-pc`](https://huggingface.co/il18/llada-math-pc) |
+| | Grade School Math | [`il18/llada-gsm-pc`](https://huggingface.co/il18/llada-gsm-pc) |
+| | Code Generation | [`il18/llada-code-pc`](https://huggingface.co/il18/llada-code-pc) |
+| **Dream-7B** | Mathematical Reasoning | [`il18/dream-math-pc`](https://huggingface.co/il18/dream-math-pc) |
+| | Grade School Math | [`il18/dream-gsm-pc`](https://huggingface.co/il18/dream-gsm-pc) |
+| | Code Generation | [`il18/dream-code-pc`](https://huggingface.co/il18/dream-code-pc) |
+
 ## Benchmark Evaluation
 
 Use `./eval/eval.sh` to run evaluations on benchmarks (GSM8K, MATH500, MBPP, GPQA).
