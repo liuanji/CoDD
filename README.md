@@ -25,7 +25,7 @@ Our evaluation uses a customized lm-evaluation-harness. Add it to your Python pa
 
 ```bash
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/lm-evaluation-harness"
-cd lm-eval-harness
+cd lm-evaluation-harness
 pip install -e .
 pip install math_verify
 cd ..
