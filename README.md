@@ -110,5 +110,18 @@ Run multiple evaluations in parallel across GPUs:
 
 Logs are saved to `eval/results/logs/`.
 
+## Citation
+```bibtex
+@misc{li2026breakingfactorizationbarrierdiffusion,
+      title={Breaking the Factorization Barrier in Diffusion Language Models}, 
+      author={Ian Li and Zilei Shao and Benjie Wang and Rose Yu and Guy Van den Broeck and Anji Liu},
+      year={2026},
+      eprint={2603.00045},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2603.00045}, 
+}
+```
+
 ## Acknowledgements
 The evaluation scripts in this repository are adapted from [APD](https://github.com/danielmisrael/apd), building upon the [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness).
