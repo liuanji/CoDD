@@ -1,5 +1,7 @@
 import os
 os.environ["HF_ALLOW_CODE_EVAL"] = "1"
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import argparse
 import json
 import logging
@@ -8,11 +10,9 @@ from lm_eval import evaluator
 from lm_eval.tasks import TaskManager
 from harness import DreamEvalHarness, ProfileEvalHarness, LladaEvalHarness
 from utils import parse_results
-from transformers import AutoModel, AutoTokenizer
-import pyjuice as juice
-from dream.modeling_dream import DreamModel
 from peft import PeftModel
-from pc_model_hf import PyJuiceHubModel
+from llada.codd_llada import CoddLlada
+from dream.codd_dream import CoddDream
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,67 +25,74 @@ def get_model(args):
     
     model_alias = args.model_alias
     alg = args.alg
-    # Canonical names only
     tokens_per_step = args.tokens_per_step
     num_steps = args.num_steps
     task_name = args.task
 
     logger.info(f"Configuring model details for alias: {model_alias}")
-    
-    pc_model = None
-    if args.pc_ckpt:
-        logger.info(f"Loading PC model from {args.pc_ckpt}")
-        wrapper_model = PyJuiceHubModel.from_pretrained(args.pc_ckpt)
-        pc = wrapper_model.pc
-        pc_model = juice.compile(pc)
-        pc_model.to(torch.device(f"cuda:0"))
-        
+
     if model_alias == "dream":
         if args.dream_ckpt is None:
             raise ValueError("--dream_ckpt is required when --model_alias=dream")
-        dream = DreamModel.from_pretrained(args.dream_ckpt, 
-                                               trust_remote_code=True,  
-                                               attn_implementation="sdpa", 
-                                               torch_dtype=torch.bfloat16, 
-                                               device_map="cuda",
-                                               local_files_only=True)
-        tokenizer = AutoTokenizer.from_pretrained(args.dream_ckpt, trust_remote_code=True)
+
+        codd = CoddDream.from_pretrained(
+            args.dream_ckpt,
+            pc_model_id=args.pc_ckpt,
+            torch_dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+            device_map="cuda",
+            local_files_only=True,
+            pc_temperature=args.pc_temperature,
+            pc_frac=args.pc_frac,
+            reverse_frac=args.reverse_frac,
+        )
+
         model = DreamEvalHarness(
-            pretrained=dream,
-            tokenizer=tokenizer,
+            pretrained=codd,
+            tokenizer=codd.tokenizer,
             alg=alg,
             block_diff=args.dream_block,
             window=args.dream_window,
             num_steps=num_steps,
-            max_gen_toks=512 if task_name=="math500" else 256,
-            pc_model=pc_model,
-            pc_temperature=args.pc_temperature,
-            pc_frac=args.pc_frac,
-            reverse_frac=args.reverse_frac
-        )
-        
-    elif model_alias == "llada":
-                # Load PEFT/LoRA checkpoint if specified
-
-        if args.llada_ckpt is None:
-            raise ValueError("--llada_ckpt is required when --model_alias=llada")
-        llada = AutoModel.from_pretrained(args.llada_ckpt, trust_remote_code=True, torch_dtype=torch.bfloat16, local_files_only=True).to("cuda").eval()
-        tokenizer = AutoTokenizer.from_pretrained(args.llada_ckpt, trust_remote_code=True,local_files_only=True)
-        if args.peft_ckpt:
-            logger.info(f"Loading PEFT checkpoint from {args.peft_ckpt}")
-            llada = PeftModel.from_pretrained(llada, args.peft_ckpt, torch_dtype=torch.bfloat16).to("cuda").eval()
-            logger.info("PEFT checkpoint loaded successfully")
-        model = LladaEvalHarness(
-            pretrained=llada, 
-            tokenizer=tokenizer, 
-            alg=alg, 
-            tokens_per_step=tokens_per_step, 
-            num_steps=num_steps,
-            pc_model=pc_model,
+            max_gen_toks=512 if task_name == "math500" else 256,
+            pc_model=codd.pc_model,
             pc_temperature=args.pc_temperature,
             pc_frac=args.pc_frac,
             reverse_frac=args.reverse_frac,
-            block_length=args.block_length
+        )
+
+    elif model_alias == "llada":
+        if args.llada_ckpt is None:
+            raise ValueError("--llada_ckpt is required when --model_alias=llada")
+
+        codd = CoddLlada.from_pretrained(
+            args.llada_ckpt,
+            pc_model_id=args.pc_ckpt,
+            torch_dtype=torch.bfloat16,
+            local_files_only=True,
+            device_map="cuda",
+        )
+        codd.eval()
+
+        base_model = codd
+        if args.peft_ckpt:
+            logger.info(f"Loading PEFT checkpoint from {args.peft_ckpt}")
+            base_model = PeftModel.from_pretrained(
+                codd, args.peft_ckpt, torch_dtype=torch.bfloat16
+            ).to("cuda").eval()
+            logger.info("PEFT checkpoint loaded successfully")
+
+        model = LladaEvalHarness(
+            pretrained=base_model,
+            tokenizer=codd.tokenizer,
+            alg=alg,
+            tokens_per_step=tokens_per_step,
+            num_steps=num_steps,
+            pc_model=codd.pc_model,
+            pc_temperature=args.pc_temperature,
+            pc_frac=args.pc_frac,
+            reverse_frac=args.reverse_frac,
+            block_length=args.block_length,
         )
 
     else:
@@ -121,7 +128,7 @@ def main():
     )
     parser.add_argument(
         "--alg",
-        choices=["low_confidence", "random", "origin", "entropy", "margin", "margin", "topprob"]
+        choices=["low_confidence", "random", "origin", "entropy", "margin", "topprob"]
     )
     parser.add_argument("--dream_block", default = False, action = "store_true")
     parser.add_argument("--dream_window", default = False, action = "store_true")

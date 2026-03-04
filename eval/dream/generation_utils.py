@@ -37,6 +37,10 @@ import numpy as np
 import time
 import pyjuice as juice
 
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from codd import apply_pc_logits
+
 def get_num_transfer_tokens(mask_index, steps):
     '''
     In the reverse process, the interval [0, 1] is uniformly discretized into steps intervals.
@@ -715,8 +719,10 @@ class DreamGenerationMixin:
         x = F.pad(input_ids, (0, max_length - input_ids.shape[1]), value=mask_token_id)
         
         timesteps = torch.linspace(1, eps, steps + 1, device=x.device)
+
         for i in range(steps):
             mask_index = (x == mask_token_id)
+            
             # 1. Base Model Forward Pass
             logits = self(x, "full", None).logits
             logits = torch.cat([logits[:,:1], logits[:, :-1]], dim=1) # Dream Shift
@@ -731,16 +737,31 @@ class DreamGenerationMixin:
             t = timesteps[i]
             s = timesteps[i + 1]
 
-            tokens_per_step = (max_length - input_ids.shape[1]) // steps 
+            tokens_per_step = (max_length - input_ids.shape[1]) // steps
+            must_dec_tokens = None
 
             with torch.no_grad():
                 # 1. Calculate max probability for every token in the sequence
                 if remask_strategy == 'entropy':
-                    log_probs = F.log_softmax(logits, dim=-1)
-                    probs = log_probs.exp()
-                    token_confidences = (probs * log_probs).sum(dim=-1) # [Batch, Seq]
+                    # log_probs = F.log_softmax(logits, dim=-1)
+                    # probs = log_probs.exp()
+                    # token_confidences = (probs * log_probs).sum(dim=-1) # [Batch, Seq]
+                    probs = F.softmax(logits, dim=-1)
+                    token_confidences = -torch.sum(torch.special.entr(probs), dim=-1)
                 elif remask_strategy == 'origin':
                     token_confidences = torch.rand((x.shape[0], x.shape[1]), device=x.device)
+                elif remask_strategy == 'topk_margin':
+                    log_probs = F.log_softmax(logits, dim=-1)
+                    probs = log_probs.exp()
+                    top_probs, _ = torch.topk(probs, k=2, dim=-1)
+                    # Extract top1 and top2 probabilities
+                    top1_probs = top_probs[..., 0] 
+                    top2_probs = top_probs[..., 1]
+                    # Calculate confidence as top1 - top2
+                    token_confidences = top1_probs - top2_probs 
+                elif remask_strategy == "topprob":
+                    probs = torch.softmax(logits, dim=-1)
+                    token_confidences = torch.max(probs, dim=-1).values
 
                 
                 # 2. Ignore tokens that are already unmasked (set their conf to -1)
@@ -750,35 +771,62 @@ class DreamGenerationMixin:
                 # 3. Find Top k positions
                 # We need at least 2 masked tokens to do this check
                 if mask_index.sum() >= 2:
-                    tokens_per_step = min(mask_index.sum(), tokens_per_step)
-                    topk_vals, topk_indices = torch.topk(token_confidences[0], k=tokens_per_step)
-                    min_idx = topk_indices.min().item()
-                    max_idx = topk_indices.max().item()
-                    span = max_idx - min_idx + 1
+                    # Determine how many top candidates to check
+                    num_mask_token = mask_index.sum()
+                    number_transfer_tokens = int(num_mask_token * (1 - s / t)) if i < steps - 1 else num_mask_token
+                    
+                    # Get the indices of the most confident tokens
+                    topk_vals, topk_indices = torch.topk(token_confidences[0], k=number_transfer_tokens)
+                    
+                    # Sorting by index helps us scan spatially, though not strictly required for coverage check
+                    sorted_topk, _ = torch.sort(topk_indices, descending=False) 
 
-                    # 4. Check "Close Enough" heuristic
-                    if span < block_length:
+                    seq_len = x.shape[1]
+                    best_coverage = -1
+                    best_start, best_end = 0, block_length
+                    
+                    half_block = block_length // 2
 
-                        run_pc_adjustment = True
-
-                        # Try putting idx1 at the middle 
-                        end_idx = max_idx + block_length // 2
-                        start_idx = max_idx - block_length // 2
+                    # Iterate through each top-k token to use it as a "Center Point"
+                    for anchor_idx in sorted_topk:
+                        anchor = anchor_idx.item()
                         
-                        # fall back
-                        if end_idx >= x.shape[1]:
-                            end_idx = x.shape[1] - 1
-                            start_idx = end_idx - block_length
+                        # 1. Try to center the window around the anchor
+                        start_idx = anchor - half_block
+                        end_idx = start_idx + block_length
+                        
+                        # 2. Boundary Clamping
+                        # A. Left Edge: If window starts before 0, shift it right to start at 0
                         if start_idx < 0:
                             start_idx = 0
-                            end_idx = start_idx + block_length
-                        if start_idx < 0 or end_idx >= x.shape[1]:
-                            start_idx = 0
                             end_idx = block_length
+                            
+                        # B. Right Edge: If window goes past end, shift it left to end at seq_len
+                        if end_idx > seq_len:
+                            end_idx = seq_len
+                            start_idx = max(0, seq_len - block_length)
+
+                        # 3. Calculate coverage: How many top-k tokens fall in [start_idx, end_idx]?
+                        # (Using boolean mask sum is fast)
+                        coverage = ((topk_indices >= start_idx) & (topk_indices < end_idx)).sum().item()
+                        
+                        # 4. Tie-breaking Preference (Optional):
+                        # If coverage is equal, prefer the window that centers the anchor better?
+                        # For now, simple ">" keeps the first found best.
+                        if coverage > best_coverage:
+                            best_coverage = coverage
+                            best_start, best_end = start_idx, end_idx
+
+                            must_dec_tokens = topk_indices[((topk_indices < start_idx) | (topk_indices >= end_idx))]
+                            
+                    # Apply the results
+                    if best_coverage > 1:
+                        run_pc_adjustment = True
+                        start_idx, end_idx = best_start, best_end
 
             # C. PC Logic
             # Only run if the window is valid and roughly matches the block requirements
-            if run_pc_adjustment and (end_idx - start_idx) == block_length:
+            if run_pc_adjustment:
                 curr_x = x[:, start_idx:end_idx]
                 mask_ratio = (curr_x == mask_token_id).float().mean()
 
@@ -829,23 +877,33 @@ class DreamGenerationMixin:
                     
                     # Reshape back and update the main logits tensor
                     logits[:, start_idx:end_idx, :] = sampled_logits.view(node_samples.size(1), block_length, -1)
-
-            # Use boolean indexing to flatten: [Num_Masks, Vocab]
+                    # print(sampled_logits.view(node_samples.size(1), block_length, -1).max(dim=-1))
+                else:
+                    run_pc_adjustment = False
+            
             if alg == 'origin':
                 _, x0 = sample_tokens(logits, temperature=temperature, top_p=top_p, top_k=top_k)
                 confidence = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
             elif alg == 'maskgit_plus':
                 confidence, x0 = sample_tokens(logits, temperature=temperature, top_p=top_p, top_k=top_k)
-            elif alg == 'margin':
+            elif alg == 'topk_margin':
                 confidence, x0 = sample_tokens(logits, temperature=temperature, top_p=top_p, top_k=top_k, margin_confidence=True)
             elif alg == 'entropy':
                 confidence, x0 = sample_tokens(logits, temperature, top_p=top_p, top_k=top_k, neg_entropy=True)
+            elif alg == 'topprob':
+                _, x0 = sample_tokens(logits, temperature, top_p=top_p, top_k=top_k)
+                probs = torch.softmax(logits, dim=-1)
+                confidence = torch.max(probs, dim=-1).values
             else:
                 raise RuntimeError(f"Unknown alg: {alg}")
+            
+            logits = None
             
             if run_pc_adjustment:
                 confidence[:, :start_idx] = -1e9
                 confidence[:, end_idx:] = -1e9
+            if must_dec_tokens is not None:
+                confidence[:,must_dec_tokens] = 1e9
             confidence[~mask_index] = -1e9 # Set already unmasked tokens to very low confidence
             x0 = torch.where(mask_index, x0, x)
 
@@ -854,14 +912,15 @@ class DreamGenerationMixin:
             for j in range(confidence.shape[0]):
                 _, select_index = torch.topk(confidence[j], number_transfer_tokens)
                 x[j, select_index] = x0[j, select_index]
-
+                # print(f"DEBUG: decoded idx {select_index.tolist()}")
+                
             if histories is not None:
                 histories.append(x.clone())
 
         if return_dict_in_generate:
             return DreamModelOutput(
-                sequences=x[0,:].unsqueeze(0),
+                sequences=x,
                 history=histories,
             )
         else:
-            return x[0,:].unsqueeze(0)
+            return x
