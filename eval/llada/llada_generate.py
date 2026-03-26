@@ -41,8 +41,9 @@ def get_num_transfer_tokens(mask_index, steps):
 
 
 def _is_codd_model(model):
-    """Check whether *model* is a CoDD instance (duck-typed to avoid circular imports)."""
-    return hasattr(model, 'pc_model') and hasattr(model, 'codd_config') and hasattr(model, '_pc_compiled')
+    """Check whether *model* is a CoDD instance with a PC actually loaded."""
+    return (hasattr(model, 'pc_model') and model.pc_model is not None
+            and hasattr(model, 'codd_config') and hasattr(model, '_pc_compiled'))
 
 
 @torch.no_grad()
