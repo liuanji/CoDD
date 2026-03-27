@@ -71,7 +71,7 @@ cd eval
 
 ```bash
 ./eval.sh --gpus 0 \
-    --run '--model_alias llada --llada_ckpt GSAI-ML/LLaDA-8B-Instruct --task math500 --alg low_confidence --num_steps 256 --pc_ckpt il18/llada-math-pc --pc_temperature 0.1 --pc_frac 0.3'
+    --run '--model_alias llada --llada_ckpt GSAI-ML/LLaDA-8B-Instruct --task math500 --alg low_confidence --num_steps 256 --pc_ckpt il18/llada-math-pc --pc_temperature 0.2 --pc_frac 0.5'
 ```
 
 ### eval.sh Options
