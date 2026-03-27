@@ -13,6 +13,8 @@ from utils import parse_results
 from peft import PeftModel
 from llada.codd_llada import CoddLlada
 from dream.codd_dream import CoddDream
+from dream.modeling_dream import DreamModel
+from transformers import AutoModel, AutoTokenizer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,27 +37,37 @@ def get_model(args):
         if args.dream_ckpt is None:
             raise ValueError("--dream_ckpt is required when --model_alias=dream")
 
-        codd = CoddDream.from_pretrained(
-            args.dream_ckpt,
-            pc_model_id=args.pc_ckpt,
-            torch_dtype=torch.bfloat16,
-            attn_implementation="sdpa",
-            device_map="cuda",
-            local_files_only=True,
-            pc_temperature=args.pc_temperature,
-            pc_frac=args.pc_frac,
-            reverse_frac=args.reverse_frac,
-        )
-
+        if args.pc_ckpt is not None:
+            codd = CoddDream.from_pretrained(
+                args.dream_ckpt,
+                pc_model_id=args.pc_ckpt,
+                torch_dtype=torch.bfloat16,
+                attn_implementation="sdpa",
+                device_map="cuda",
+                local_files_only=True,
+                pc_temperature=args.pc_temperature,
+                pc_frac=args.pc_frac,
+                reverse_frac=args.reverse_frac,
+            )
+            tokenizer = codd.tokenizer
+        else:
+            codd = DreamModel.from_pretrained(args.dream_ckpt, 
+                                        trust_remote_code=True,  
+                                        attn_implementation="sdpa", 
+                                        torch_dtype=torch.bfloat16, 
+                                        device_map="cuda",
+                                        local_files_only=True)
+            tokenizer = AutoTokenizer.from_pretrained(args.dream_ckpt, trust_remote_code=True)
+        
         model = DreamEvalHarness(
             pretrained=codd,
-            tokenizer=codd.tokenizer,
+            tokenizer=tokenizer,
             alg=alg,
             block_diff=args.dream_block,
             window=args.dream_window,
             num_steps=num_steps,
             max_gen_toks=512 if task_name == "math500" else 256,
-            pc_model=codd.pc_model,
+            pc_model=codd.pc_model if args.pc_ckpt else None,
             pc_temperature=args.pc_temperature,
             pc_frac=args.pc_frac,
             reverse_frac=args.reverse_frac,
@@ -65,13 +77,20 @@ def get_model(args):
         if args.llada_ckpt is None:
             raise ValueError("--llada_ckpt is required when --model_alias=llada")
 
-        codd = CoddLlada.from_pretrained(
-            args.llada_ckpt,
-            pc_model_id=args.pc_ckpt,
-            torch_dtype=torch.bfloat16,
-            local_files_only=True,
-            device_map="cuda",
-        )
+        if args.pc_ckpt is not None:
+            codd = CoddLlada.from_pretrained(
+                args.llada_ckpt,
+                pc_model_id=args.pc_ckpt,
+                torch_dtype=torch.bfloat16,
+                local_files_only=True,
+                attn_implementation="eager",
+                device_map="cuda",
+            )
+            tokenizer = codd.tokenizer
+        else:
+            codd = AutoModel.from_pretrained(args.llada_ckpt, attn_implementation="eager", trust_remote_code=True, torch_dtype=torch.bfloat16).to("cuda").eval()
+            tokenizer = AutoTokenizer.from_pretrained(args.llada_ckpt, trust_remote_code=True)
+
         codd.eval()
 
         base_model = codd
@@ -84,11 +103,11 @@ def get_model(args):
 
         model = LladaEvalHarness(
             pretrained=base_model,
-            tokenizer=codd.tokenizer,
+            tokenizer=tokenizer,
             alg=alg,
             tokens_per_step=tokens_per_step,
             num_steps=num_steps,
-            pc_model=codd.pc_model,
+            pc_model=codd.pc_model if args.pc_ckpt else None,
             pc_temperature=args.pc_temperature,
             pc_frac=args.pc_frac,
             reverse_frac=args.reverse_frac,
@@ -161,7 +180,7 @@ def main():
     )
 
     args = parser.parse_args()
-    
+
     # Validate algorithm choices based on model alias
     valid_algs = {
         "llada": ["low_confidence", "random", "margin", "entropy", "topprob"],

@@ -42,8 +42,7 @@ def get_num_transfer_tokens(mask_index, steps):
 
 def _is_codd_model(model):
     """Check whether *model* is a CoDD instance with a PC actually loaded."""
-    return (hasattr(model, 'pc_model') and model.pc_model is not None
-            and hasattr(model, 'codd_config') and hasattr(model, '_pc_compiled'))
+    return (hasattr(model, 'pc_model') and hasattr(model, 'codd_config') and hasattr(model, '_pc_compiled'))
 
 
 @torch.no_grad()
@@ -273,9 +272,7 @@ def llada_diffusion_pc_generate(model, prompt, num_steps=256, gen_length=512, bl
                     layer = pc_model.input_layer_group[0]
                     layer_sid, _ = layer._output_ind_range
 
-                    node_samples = node_samples[:,:16]
-
-                    sampled_logits = external_soft_evi.clone()[:16, :, :]
+                    sampled_logits = external_soft_evi.clone()
                     for j in range(node_samples.size(1)):
                         mask = (node_samples[:, j] >= 0)
                         node_ids = node_samples[mask, j] - layer_sid
